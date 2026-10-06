@@ -31,6 +31,15 @@ async fn update_translator_shortcut(
 }
 
 #[tauri::command]
+async fn update_screen_shortcut(
+    app_handle: tauri::AppHandle,
+    which: String,
+    keys: Vec<String>,
+) -> Result<(), String> {
+    shortcut::update_screen_shortcut(&app_handle, &which, keys)
+}
+
+#[tauri::command]
 async fn get_settings(app_handle: tauri::AppHandle) -> Result<store::AppSettings, String> {
     store::get_settings(&app_handle).map_err(|e| e.to_string())
 }
@@ -73,6 +82,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             update_translator_shortcut,
+            update_screen_shortcut,
             log_to_backend,
             get_settings,
             get_version,

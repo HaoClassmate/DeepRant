@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import { useStore } from '../components/StoreProvider';
 import { showSuccess, showError } from '../utils/toast';
+import HotkeyRecorder from '../components/HotkeyRecorder';
 
 const DEFAULTS = {
     region: null,
@@ -50,6 +51,18 @@ export default function ScreenOcr() {
         try { await invoke(cmd); if (ok) showSuccess(ok); } catch (e) { showError(String(e)); }
     };
 
+    // which: screen（截图翻译）| select（框选区域）
+    const setHotkey = async (which, keys) => {
+        try {
+            await invoke('update_screen_shortcut', { which, keys });
+            const latest = (await store.get('settings'))?.screen;
+            if (latest) setScreen((cur) => ({ ...cur, hotkey: latest.hotkey, select_hotkey: latest.select_hotkey }));
+            showSuccess('快捷键已更新');
+        } catch (e) {
+            showError('快捷键设置失败：' + e);
+        }
+    };
+
     const r = screen.region;
     return (
         <div className="h-full flex flex-col gap-6 p-6 overflow-auto">
@@ -71,6 +84,21 @@ export default function ScreenOcr() {
                     <button className={`${button} bg-zinc-100 text-zinc-800 hover:bg-zinc-200 disabled:opacity-40`} disabled={!r} onClick={() => run('ocr_translate_now')}>
                         现在翻译一次
                     </button>
+                </div>
+            </motion.div>
+
+            <motion.div className={card} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.03 }}>
+                <h2 className="text-lg font-semibold text-zinc-900 mb-1">快捷键</h2>
+                <p className="text-sm text-zinc-500 mb-4">点击按钮后按下新的组合键（要带 Ctrl / Alt / Shift / Win 之一），Esc 取消。注意别和游戏里的按键冲突：被占用的组合键游戏里就收不到了。</p>
+                <div className="grid gap-3">
+                    <div className="flex items-center justify-between">
+                        <span className="text-sm text-zinc-700">截图翻译</span>
+                        <HotkeyRecorder value={screen.hotkey?.shortcut} onChange={(keys) => setHotkey('screen', keys)} />
+                    </div>
+                    <div className="flex items-center justify-between">
+                        <span className="text-sm text-zinc-700">重新框选聊天区域</span>
+                        <HotkeyRecorder value={screen.select_hotkey?.shortcut} onChange={(keys) => setHotkey('select', keys)} />
+                    </div>
                 </div>
             </motion.div>
 

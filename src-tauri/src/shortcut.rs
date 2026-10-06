@@ -143,27 +143,89 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let screen = &settings.screen;
-        if let Err(e) = register_shortcut(app, &screen.hotkey.modifiers, &screen.hotkey.key, |app, _s, event| {
-            if event.state() == ShortcutState::Pressed {
-                crate::screen_ocr::trigger(app);
-            }
-        }) {
+        if let Err(e) = register_shortcut(app, &screen.hotkey.modifiers, &screen.hotkey.key, screen_translate_handler) {
             println!("注册截图翻译快捷键失败: {}", e);
         }
-        if let Err(e) = register_shortcut(app, &screen.select_hotkey.modifiers, &screen.select_hotkey.key, |app, _s, event| {
-            if event.state() == ShortcutState::Pressed {
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = crate::screen_ocr::ocr_select_region(app).await {
-                        println!("打开框选失败: {}", e);
-                    }
-                });
-            }
-        }) {
+        if let Err(e) = register_shortcut(app, &screen.select_hotkey.modifiers, &screen.select_hotkey.key, screen_select_handler) {
             println!("注册框选快捷键失败: {}", e);
         }
     }
 
+    Ok(())
+}
+
+/// 把前端录到的按键数组（最后一个是主键）解析成快捷键配置，带上显示用的文字
+fn hotkey_from_keys(keys: &[String]) -> Result<HotkeyConfig, String> {
+    let is_modifier = |k: &String| {
+        k.contains("Control") || k.contains("Alt") || k.contains("Shift") || k.contains("Meta")
+    };
+    if keys.len() < 2 || !keys.iter().any(is_modifier) || !keys.iter().any(|k| !is_modifier(k)) {
+        return Err(
+            "快捷键必须包含至少一个修饰键(Control/Alt/Shift/Command)和一个其他按键".to_string(),
+        );
+    }
+    let modifiers: Vec<String> = keys[..keys.len() - 1]
+        .iter()
+        .map(|k| k.replace("Left", "").replace("Right", ""))
+        .collect();
+    let key = keys[keys.len() - 1].clone();
+    let shortcut = format!(
+        "{}+{}",
+        modifiers
+            .iter()
+            .map(|m| match m.as_str() {
+                "Control" =>
+                    if cfg!(target_os = "macos") {
+                        "⌃"
+                    } else {
+                        "Ctrl"
+                    },
+                "Alt" =>
+                    if cfg!(target_os = "macos") {
+                        "⌥"
+                    } else {
+                        "Alt"
+                    },
+                "Shift" => "⇧",
+                "Meta" =>
+                    if cfg!(target_os = "macos") {
+                        "⌘"
+                    } else {
+                        "Win"
+                    },
+                _ => m,
+            })
+            .collect::<Vec<_>>()
+            .join("+"),
+        format_key_display(&key)
+    );
+    Ok(HotkeyConfig { modifiers, key, shortcut })
+}
+
+/// 两个快捷键是不是同一组按键（修饰键顺序无关）
+fn same_hotkey(a: &HotkeyConfig, b: &HotkeyConfig) -> bool {
+    let norm = |h: &HotkeyConfig| {
+        let mut m = h.modifiers.clone();
+        m.sort();
+        m.dedup();
+        (m, h.key.clone())
+    };
+    norm(a) == norm(b)
+}
+
+/// 新快捷键不能和 DeepRant 自己的其他快捷键重复；`except` 是正在修改的那个
+fn check_conflict(app: &AppHandle, new: &HotkeyConfig, except: &str) -> Result<(), String> {
+    let settings = get_settings(app).map_err(|e| e.to_string())?;
+    let mut others = vec![("translate", "翻译", &settings.trans_hotkey)];
+    if cfg!(target_os = "windows") {
+        others.push(("screen", "截图翻译", &settings.screen.hotkey));
+        others.push(("select", "框选区域", &settings.screen.select_hotkey));
+    }
+    for (id, name, hotkey) in others {
+        if id != except && same_hotkey(new, hotkey) {
+            return Err(format!("和「{}」的快捷键重复了", name));
+        }
+    }
     Ok(())
 }
 
@@ -172,110 +234,82 @@ pub fn update_translator_shortcut(
     app: &AppHandle,
     keys: Vec<String>, // 直接接收按键数组
 ) -> Result<(), String> {
-    println!("正在更新翻译快捷键...");
-    println!("接收到的按键数组: {:?}", keys);
+    println!("正在更新翻译快捷键: {:?}", keys);
+    let new_hotkey = hotkey_from_keys(&keys)?;
+    check_conflict(app, &new_hotkey, "translate")?;
+    let settings = get_settings(app).map_err(|e| e.to_string())?;
 
-    // 验证快捷键组合
-    let has_modifier = keys.iter().any(|k| {
-        k.contains("Control") || k.contains("Alt") || k.contains("Shift") || k.contains("Meta")
-    });
-
-    let has_non_modifier = keys.iter().any(|k| {
-        !k.contains("Control") && !k.contains("Alt") && !k.contains("Shift") && !k.contains("Meta")
-    });
-
-    if !has_modifier || !has_non_modifier || keys.len() < 2 {
-        return Err(
-            "快捷键必须包含至少一个修饰键(Control/Alt/Shift/Command)和一个其他按键".to_string(),
-        );
-    }
-
-    let settings = get_settings(app).map_err(|e| {
-        println!("获取设置失败: {}", e);
-        e.to_string()
-    })?;
-
-    // 分离修饰键和主键
-    let (modifiers, key) = if keys.is_empty() {
-        (Vec::new(), String::new())
-    } else {
-        let mods: Vec<String> = keys[..keys.len() - 1]
-            .iter()
-            .map(|k| k.replace("Left", "").replace("Right", ""))
-            .collect();
-        let k = keys.last().unwrap_or(&String::new()).to_string();
-        (mods, k)
-    };
-
-    println!("解析后的按键: {}", key);
-    println!("解析后的修饰键: {:?}", modifiers);
-
-    // 更新快捷键
-    let result = update_shortcut(
+    update_shortcut(
         app,
         &settings.trans_hotkey.modifiers,
         &settings.trans_hotkey.key,
-        &modifiers,
-        &key,
+        &new_hotkey.modifiers,
+        &new_hotkey.key,
         create_trans_handler(app.clone()),
-    );
+    )?;
+    update_settings_field(app, |settings| settings.trans_hotkey = new_hotkey)
+        .map_err(|e| format!("快捷键已更新，但保存设置失败: {}", e))?;
+    println!("翻译快捷键更新成功");
+    Ok(())
+}
 
-    // 如果快捷键更新成功，则更新存储
-    if result.is_ok() {
-        // 创建新的快捷键配置
-        let shortcut_text = format!(
-            "{}+{}",
-            modifiers
-                .iter()
-                .map(|m| match m.as_str() {
-                    "Control" =>
-                        if cfg!(target_os = "macos") {
-                            "⌃"
-                        } else {
-                            "Ctrl"
-                        },
-                    "Alt" =>
-                        if cfg!(target_os = "macos") {
-                            "⌥"
-                        } else {
-                            "Alt"
-                        },
-                    "Shift" => "⇧",
-                    "Meta" =>
-                        if cfg!(target_os = "macos") {
-                            "⌘"
-                        } else {
-                            "Win"
-                        },
-                    _ => m,
-                })
-                .collect::<Vec<_>>()
-                .join("+"),
-            format_key_display(&key)
-        );
+/// 截图翻译：按下翻译记住的区域
+fn screen_translate_handler(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutEvent) {
+    if event.state() == ShortcutState::Pressed {
+        crate::screen_ocr::trigger(app);
+    }
+}
 
-        let new_hotkey = HotkeyConfig {
-            modifiers,
-            key,
-            shortcut: shortcut_text,
-        };
+/// 截图翻译：按下重新框选区域
+fn screen_select_handler(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutEvent) {
+    if event.state() == ShortcutState::Pressed {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = crate::screen_ocr::ocr_select_region(app).await {
+                println!("打开框选失败: {}", e);
+            }
+        });
+    }
+}
 
-        // 更新存储
-        if let Err(e) = update_settings_field(app, |settings| {
-            settings.trans_hotkey = new_hotkey;
-        }) {
-            println!("保存设置失败: {}", e);
-            return Err(format!("快捷键已更新，但保存设置失败: {}", e));
+/// 更新截图翻译的快捷键；`which` 是 "screen"（翻译）或 "select"（框选）
+pub fn update_screen_shortcut(app: &AppHandle, which: &str, keys: Vec<String>) -> Result<(), String> {
+    if !cfg!(target_os = "windows") {
+        return Err("截图翻译目前只支持 Windows".to_string());
+    }
+    println!("正在更新截图翻译快捷键 {}: {:?}", which, keys);
+    let new_hotkey = hotkey_from_keys(&keys)?;
+    check_conflict(app, &new_hotkey, which)?;
+    let screen = get_settings(app).map_err(|e| e.to_string())?.screen;
+
+    match which {
+        "screen" => update_shortcut(
+            app,
+            &screen.hotkey.modifiers,
+            &screen.hotkey.key,
+            &new_hotkey.modifiers,
+            &new_hotkey.key,
+            screen_translate_handler,
+        )?,
+        "select" => update_shortcut(
+            app,
+            &screen.select_hotkey.modifiers,
+            &screen.select_hotkey.key,
+            &new_hotkey.modifiers,
+            &new_hotkey.key,
+            screen_select_handler,
+        )?,
+        _ => return Err(format!("未知的快捷键: {}", which)),
+    }
+    update_settings_field(app, |settings| {
+        if which == "screen" {
+            settings.screen.hotkey = new_hotkey;
+        } else {
+            settings.screen.select_hotkey = new_hotkey;
         }
-        println!("快捷键设置已保存到存储");
-    }
-
-    match &result {
-        Ok(_) => println!("翻译快捷键更新成功"),
-        Err(e) => println!("翻译快捷键更新失败: {}", e),
-    }
-
-    result
+    })
+    .map_err(|e| format!("快捷键已更新，但保存设置失败: {}", e))?;
+    Ok(())
 }
 
 /// 创建翻译快捷键处理函数
