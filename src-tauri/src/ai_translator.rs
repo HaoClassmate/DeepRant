@@ -311,3 +311,73 @@ pub async fn translate_with_gpt(app: &AppHandle, original: &str) -> Result<Strin
 
     Ok(translated)
 }
+
+// ---- 截图翻译：把别人发的聊天翻成中文 ----
+
+// 与 dota-translator 网页版同一份提示词（英雄/黑话对照表），截图识别的部分在后面补充
+const INCOMING_PROMPT: &str = include_str!("../prompts/incoming.txt");
+const OCR_SUFFIX: &str = r#"
+
+本次输入不是单条消息，而是从游戏聊天框截图里识别出的多条消息，每行一条，行首是编号（如 "3. gg wp"）。
+- 逐条翻译，输出同样的编号和顺序，每行一条："编号. 译文"。不要合并、拆分或漏行。
+- 文字是 OCR 识别的，可能有识别错误（l/1/I、O/0、rn/m 混淆，多余符号），按游戏语境理解。
+- 本来就是中文、或无需翻译的内容，原样输出。
+- 前面的条目可以当作后面条目的上下文。"#;
+
+/// 一次请求翻译多条消息，返回与输入等长的译文；某条没拿到译文时为空字符串
+pub async fn translate_incoming(app: &AppHandle, messages: &[String]) -> Result<Vec<String>> {
+    if messages.is_empty() {
+        return Ok(Vec::new());
+    }
+    let settings = crate::store::get_settings(app)?;
+    let model_config = get_model_config(&settings);
+    let user: String = messages
+        .iter()
+        .enumerate()
+        .map(|(i, m)| format!("{}. {}", i + 1, m))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut body = json!({
+        "model": model_config.model_name,
+        "messages": [
+            { "role": "system", "content": format!("{}{}", INCOMING_PROMPT, OCR_SUFFIX) },
+            { "role": "user", "content": user }
+        ],
+        "max_tokens": if settings.model_type == "deepseek-R1" { 8000 } else { 1000 },
+    });
+    if settings.model_type != "deepseek-R1" {
+        body["temperature"] = json!(0.2);
+    }
+
+    let response: Value = Client::new()
+        .post(&model_config.api_url)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", model_config.auth))
+        .timeout(std::time::Duration::from_secs(30))
+        .json(&body)
+        .send()
+        .await?
+        .json()
+        .await?;
+    let text = response
+        .pointer("/choices/0/message/content")
+        .and_then(|c| c.as_str())
+        .ok_or_else(|| anyhow::anyhow!("模型返回格式异常: {}", response))?;
+    // R1 的思考过程不要
+    let text = match text.find("</think>") {
+        Some(end) => &text[end + 8..],
+        None => text,
+    };
+
+    let mut out = vec![String::new(); messages.len()];
+    for line in text.lines() {
+        let line = line.trim();
+        let Some((num, rest)) = line.split_once('.') else { continue };
+        if let Ok(n) = num.trim().parse::<usize>() {
+            if (1..=out.len()).contains(&n) {
+                out[n - 1] = rest.trim().to_string();
+            }
+        }
+    }
+    Ok(out)
+}

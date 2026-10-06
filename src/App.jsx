@@ -7,6 +7,7 @@ import Settings from "./pages/Settings";
 import About from "./pages/About";
 import Mana from "./pages/Mana";
 import Phrases from "./pages/Phrases";
+import ScreenOcr from "./pages/ScreenOcr";
 
 const pages = {
   home: Home,
@@ -15,7 +16,8 @@ const pages = {
   settings: Settings,
   about: About,
   mana: Mana,
-  phrases: Phrases
+  phrases: Phrases,
+  screenOcr: ScreenOcr
 };
 
 function App() {

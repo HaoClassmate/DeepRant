@@ -56,6 +56,55 @@ pub struct AppSettings {
     pub model_type: String,
     pub custom_model: ModelConfig,
     pub phrases: Vec<Phrase>,
+    // 旧版本存储里没有这个字段，缺省时用默认值，否则整个设置会读取失败
+    #[serde(default)]
+    pub screen: ScreenTranslateConfig,
+}
+
+// 截图翻译要识别的屏幕区域，物理像素
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OcrRegion {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+// 截图翻译设置
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct ScreenTranslateConfig {
+    pub region: Option<OcrRegion>,
+    pub hotkey: HotkeyConfig,
+    pub select_hotkey: HotkeyConfig,
+    // 悬浮窗显示多少秒后消失
+    pub overlay_seconds: u32,
+    // 推送到远程网页（dota-translator 的 server/）
+    pub push_enabled: bool,
+    pub push_url: String,
+    pub push_token: String,
+}
+
+impl Default for ScreenTranslateConfig {
+    fn default() -> Self {
+        Self {
+            region: None,
+            hotkey: HotkeyConfig {
+                modifiers: vec!["Alt".to_string()],
+                key: "KeyQ".to_string(),
+                shortcut: "Alt+Q".to_string(),
+            },
+            select_hotkey: HotkeyConfig {
+                modifiers: vec!["Alt".to_string(), "Shift".to_string()],
+                key: "KeyQ".to_string(),
+                shortcut: "Alt+⇧+Q".to_string(),
+            },
+            overlay_seconds: 12,
+            push_enabled: false,
+            push_url: "https://dota.wanghaos.com/ocr".to_string(),
+            push_token: String::new(),
+        }
+    }
 }
 
 // 初始化默认设置
@@ -105,7 +154,8 @@ pub fn initialize_settings(app: &AppHandle) -> Result<(), anyhow::Error> {
             "api_url": "https://api.openai.com/v1/chat/completions",
             "model_name": "gpt-3.5-turbo"
         },
-        "phrases": phrases
+        "phrases": phrases,
+        "screen": ScreenTranslateConfig::default()
     });
 
     store.set("settings", default_settings);

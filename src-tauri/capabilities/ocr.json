@@ -1,0 +1,7 @@
+{
+  "identifier": "ocr-windows",
+  "description": "截图翻译的框选窗口和悬浮窗",
+  "platforms": ["windows"],
+  "windows": ["ocr-selector", "ocr-overlay"],
+  "permissions": ["core:default"]
+}

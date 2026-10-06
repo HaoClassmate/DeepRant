@@ -35,3 +35,17 @@ reqwest = { version = "0.12.12", features = ["json"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-updater = "2"
 
+# 截图翻译：GDI 截图 + Windows.Media.Ocr（与 tauri 用的 windows 版本一致）
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_WinRT",
+    "Foundation",
+    "Foundation_Collections",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Storage_Streams",
+] }
+

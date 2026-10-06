@@ -139,6 +139,31 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
         create_trans_handler(app.clone()),
     )?;
 
+    // 截图翻译（只有 Windows 能用）。注册失败（比如快捷键被别的程序占了）不影响翻译快捷键
+    #[cfg(target_os = "windows")]
+    {
+        let screen = &settings.screen;
+        if let Err(e) = register_shortcut(app, &screen.hotkey.modifiers, &screen.hotkey.key, |app, _s, event| {
+            if event.state() == ShortcutState::Pressed {
+                crate::screen_ocr::trigger(app);
+            }
+        }) {
+            println!("注册截图翻译快捷键失败: {}", e);
+        }
+        if let Err(e) = register_shortcut(app, &screen.select_hotkey.modifiers, &screen.select_hotkey.key, |app, _s, event| {
+            if event.state() == ShortcutState::Pressed {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = crate::screen_ocr::ocr_select_region(app).await {
+                        println!("打开框选失败: {}", e);
+                    }
+                });
+            }
+        }) {
+            println!("注册框选快捷键失败: {}", e);
+        }
+    }
+
     Ok(())
 }
 

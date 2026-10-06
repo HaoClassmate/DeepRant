@@ -1,6 +1,7 @@
 use crate::store::initialize_settings;
 use tauri::Manager;
 pub mod ai_translator;
+pub mod screen_ocr;
 pub mod shell_helper;
 pub mod shortcut;
 pub mod store;
@@ -74,7 +75,12 @@ pub fn run() {
             update_translator_shortcut,
             log_to_backend,
             get_settings,
-            get_version
+            get_version,
+            screen_ocr::ocr_select_region,
+            screen_ocr::ocr_translate_now,
+            screen_ocr::ocr_region_selected,
+            screen_ocr::ocr_cancel_select,
+            screen_ocr::ocr_last_overlay
         ]);
 
     // 只在非Windows系统上添加窗口事件监听
