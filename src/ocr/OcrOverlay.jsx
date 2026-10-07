@@ -34,6 +34,9 @@ export default function OcrOverlay() {
                         {it.zh && <span className="text-zinc-400 text-[13px] ml-1">({it.text})</span>}
                     </div>
                 ))}
+                {data.state === 'done' && data.note && (
+                    <div className={`text-[12px] mt-1 ${data.note_error ? 'text-red-400' : 'text-zinc-500'}`}>{data.note}</div>
+                )}
             </div>
         </div>
     );

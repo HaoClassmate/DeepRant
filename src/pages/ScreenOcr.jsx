@@ -63,6 +63,21 @@ export default function ScreenOcr() {
         }
     };
 
+    // 先把输入框里的地址和口令存下来（没点出输入框也算），再发测试消息
+    const [testing, setTesting] = useState(false);
+    const testPush = async () => {
+        setTesting(true);
+        try {
+            const url = screen.push_url.trim(), token = screen.push_token.trim();
+            await save({ push_url: url, push_token: token });
+            showSuccess(await invoke('ocr_test_push', { url, token }));
+        } catch (e) {
+            showError('推送失败：' + e);
+        } finally {
+            setTesting(false);
+        }
+    };
+
     const r = screen.region;
     return (
         <div className="h-full flex flex-col gap-6 p-6 overflow-auto">
@@ -133,6 +148,12 @@ export default function ScreenOcr() {
                         <input className={`${input} mt-1`} type="password" value={screen.push_token}
                             onChange={(e) => edit({ push_token: e.target.value })} onBlur={() => save({ push_token: screen.push_token.trim() })} />
                     </label>
+                    <div className="flex items-center gap-3">
+                        <button className={`${button} bg-zinc-100 text-zinc-800 hover:bg-zinc-200 disabled:opacity-40`} disabled={testing} onClick={testPush}>
+                            {testing ? '测试中…' : '测试推送'}
+                        </button>
+                        {!screen.push_enabled && <span className="text-xs text-amber-600">还没有勾选「开启」，截图翻译不会推送到网页</span>}
+                    </div>
                 </div>
             </motion.div>
         </div>

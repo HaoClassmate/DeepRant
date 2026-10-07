@@ -32,6 +32,9 @@ pub struct OverlayPayload {
     pub items: Vec<OcrItem>,
     pub message: String,
     pub seconds: u32,
+    // 推送到网页的结果，没开推送时为空
+    pub note: String,
+    pub note_error: bool,
 }
 
 static BUSY: AtomicBool = AtomicBool::new(false);
@@ -61,6 +64,35 @@ fn needs_translation(text: &str) -> bool {
     let han = text.chars().filter(|c| ('\u{4E00}'..='\u{9FFF}').contains(c)).count();
     let letters = text.chars().filter(|c| c.is_alphabetic() && !('\u{4E00}'..='\u{9FFF}').contains(c)).count();
     letters > 0 && han < letters
+}
+
+/// 推送到网页（dota-translator 的 /ocr），返回服务器新加了几条；出错时给出能看懂的原因
+async fn push(url: &str, token: &str, items: &[OcrItem]) -> Result<u64, String> {
+    if url.trim().is_empty() {
+        return Err("没有填推送地址".into());
+    }
+    if token.trim().is_empty() {
+        return Err("没有填口令".into());
+    }
+    let res = reqwest::Client::new()
+        .post(url.trim())
+        .timeout(std::time::Duration::from_secs(10))
+        .json(&serde_json::json!({ "token": token.trim(), "items": items }))
+        .send()
+        .await
+        .map_err(|e| format!("连不上服务器：{}", e))?;
+    let status = res.status();
+    let body = res.text().await.unwrap_or_default();
+    match status.as_u16() {
+        // 地址写错时服务器也可能回 200（当成了游戏数据），所以要看回的是不是 /ocr 的格式
+        200 => serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v["added"].as_u64())
+            .ok_or_else(|| "地址不对：服务器没有按截图推送接口回复，应为 https://dota.wanghaos.com/ocr".to_string()),
+        403 => Err("口令不对（服务器返回 403）".into()),
+        404 => Err("地址不对（服务器返回 404），应为 https://dota.wanghaos.com/ocr".into()),
+        _ => Err(format!("服务器返回 HTTP {}：{}", status, body.chars().take(100).collect::<String>())),
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -232,19 +264,6 @@ mod win {
         Ok(lines)
     }
 
-    async fn push(url: &str, token: &str, items: &[OcrItem]) -> anyhow::Result<()> {
-        let res = reqwest::Client::new()
-            .post(url)
-            .timeout(std::time::Duration::from_secs(10))
-            .json(&serde_json::json!({ "token": token, "items": items }))
-            .send()
-            .await?;
-        if !res.status().is_success() {
-            anyhow::bail!("HTTP {}", res.status());
-        }
-        Ok(())
-    }
-
     pub async fn run(app: AppHandle) -> anyhow::Result<()> {
         let settings = get_settings(&app)?.screen;
         let Some(region) = settings.region.clone() else {
@@ -259,7 +278,7 @@ mod win {
         let seconds = settings.overlay_seconds.max(3);
         let result = async {
             place_overlay(&app, &region)?;
-            emit(&app, OverlayPayload { id, state: "pending".into(), items: vec![], message: "识别中…".into(), seconds });
+            emit(&app, OverlayPayload { id, state: "pending".into(), items: vec![], message: "识别中…".into(), seconds, note: String::new(), note_error: false });
 
             let (w, h) = (region.width, region.height);
             let r = region.clone();
@@ -285,19 +304,23 @@ mod win {
             for (k, &i) in todo.iter().enumerate() {
                 items[i].zh = zh.get(k).cloned().unwrap_or_default();
             }
-            emit(&app, OverlayPayload { id, state: "done".into(), items: items.clone(), message: String::new(), seconds });
+            let done = |note: String, note_error: bool| OverlayPayload { id, state: "done".into(), items: items.clone(), message: String::new(), seconds, note, note_error };
+            emit(&app, done(if settings.push_enabled { "推送到网页…".into() } else { String::new() }, false));
 
-            if settings.push_enabled && !settings.push_url.is_empty() {
-                if let Err(e) = push(&settings.push_url, &settings.push_token, &items).await {
-                    println!("推送到网页失败: {}", e);
-                }
+            if settings.push_enabled {
+                let (note, bad) = match push(&settings.push_url, &settings.push_token, &items).await {
+                    Ok(_) => ("已推送到网页".to_string(), false),
+                    Err(e) => (format!("推送到网页失败：{}", e), true),
+                };
+                println!("{}", note);
+                emit(&app, done(note, bad));
             }
             anyhow::Ok(())
         }
         .await;
         BUSY.store(false, Ordering::SeqCst);
         if let Err(e) = &result {
-            emit(&app, OverlayPayload { id, state: "error".into(), items: vec![], message: e.to_string(), seconds });
+            emit(&app, OverlayPayload { id, state: "error".into(), items: vec![], message: e.to_string(), seconds, note: String::new(), note_error: false });
         }
         result
     }
@@ -365,6 +388,25 @@ pub async fn ocr_region_selected(
     Ok(())
 }
 
+/// 设置页的「测试推送」：发一条测试消息，返回结果说明
+#[tauri::command]
+pub async fn ocr_test_push(url: String, token: String) -> Result<String, String> {
+    let item = OcrItem {
+        name: "DeepRant".into(),
+        text: format!("推送测试 {}", chrono_like_now()),
+        zh: "看到这条说明截图翻译能推送到网页".into(),
+    };
+    push(&url, &token, &[item]).await.map(|_| "推送成功，打开网页的「截图翻译」标签可以看到测试消息".to_string())
+}
+
+// 测试消息带上时间，免得被服务器当成重复消息不显示
+fn chrono_like_now() -> String {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    // UTC+8
+    let t = (secs + 8 * 3600) % 86400;
+    format!("{:02}:{:02}:{:02}", t / 3600, t / 60 % 60, t % 60)
+}
+
 #[tauri::command]
 pub fn ocr_cancel_select(window: tauri::WebviewWindow) {
     let _ = window.close();
@@ -377,4 +419,27 @@ pub fn ocr_last_overlay() -> Option<OverlayPayload> {
 
 async fn tokio_sleep(ms: u64) {
     let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(std::time::Duration::from_millis(ms))).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 需要本地跑着 dota-translator 的 server（GSI_TOKEN=t），否则跳过：
+    //   DT_TEST_URL=http://127.0.0.1:47999/ocr cargo test push_
+    //   线上：DT_TEST_URL=https://dota.wanghaos.com/ocr DT_TEST_TOKEN=<口令> cargo test push_
+    #[test]
+    fn push_reports_results() {
+        let Ok(url) = std::env::var("DT_TEST_URL") else { return };
+        let token = std::env::var("DT_TEST_TOKEN").unwrap_or_else(|_| "t".into());
+        let token = token.as_str();
+        let item = OcrItem { name: "T".into(), text: format!("push test {}", chrono_like_now()), zh: "测试".into() };
+        tauri::async_runtime::block_on(async {
+            assert_eq!(push(&url, token, &[item.clone()]).await, Ok(1));
+            assert_eq!(push(&url, token, &[item.clone()]).await, Ok(0), "重复消息不应再加");
+            assert_eq!(push(&url, "wrong", &[item.clone()]).await, Err("口令不对（服务器返回 403）".into()));
+            assert!(push(&url, "", &[item.clone()]).await.unwrap_err().contains("口令"));
+            assert!(push(&url.replace("/ocr", "/nope"), token, &[item]).await.unwrap_err().contains("地址不对"));
+        });
+    }
 }

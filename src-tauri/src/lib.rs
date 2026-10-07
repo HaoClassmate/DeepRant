@@ -90,7 +90,8 @@ pub fn run() {
             screen_ocr::ocr_translate_now,
             screen_ocr::ocr_region_selected,
             screen_ocr::ocr_cancel_select,
-            screen_ocr::ocr_last_overlay
+            screen_ocr::ocr_last_overlay,
+            screen_ocr::ocr_test_push
         ]);
 
     // 只在非Windows系统上添加窗口事件监听
