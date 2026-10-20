@@ -1,10 +1,8 @@
 import { motion } from 'framer-motion';
 import { GamingPad, Globe, Translate, Github, AT } from '../icons';
 import DeveloperNote from '../components/DeveloperNote';
-import { check } from '@tauri-apps/plugin-updater';
-import { relaunch } from '@tauri-apps/plugin-process';
 import { useStore } from '../components/StoreProvider';
-import { showSuccess, showError } from '../utils/toast';
+import { checkUpdateManually } from '../utils/updater';
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -23,40 +21,8 @@ export default function About() {
     }, []);
 
     const checkUpdate = async () => {
-        try {
-            setUpdateStatus('checking');
-            const update = await check();
-
-            if (update) {
-                setUpdateStatus('downloading');
-                let downloaded = 0;
-                let contentLength = 0;
-
-                await update.downloadAndInstall((progress) => {
-                    if (progress.event === 'Started') {
-                        contentLength = progress.data.contentLength;
-                        showSuccess(`开始下载更新包 ${(contentLength / 1024 / 1024).toFixed(2)}MB`);
-                    } else if (progress.event === 'Progress') {
-                        downloaded = progress.data.chunkLength;
-                        const percent = ((downloaded / contentLength) * 100).toFixed(1);
-                        showSuccess(`下载进度: ${percent}%`, { duration: 1000 });
-                    } else if (progress.event === 'Finished') {
-                        showSuccess('下载完成，准备安装');
-                    }
-                });
-
-                setUpdateStatus('installed');
-                showSuccess('更新已完成，即将重启应用');
-                await relaunch();
-            } else {
-                showSuccess('当前已是最新版本');
-                setUpdateStatus('idle');
-            }
-        } catch (error) {
-            console.error('Update error:', error);
-            showError(`更新失败: ${error.message}`);
-            setUpdateStatus('error');
-        }
+        setUpdateStatus('checking');
+        setUpdateStatus(await checkUpdateManually());
     };
 
     return (

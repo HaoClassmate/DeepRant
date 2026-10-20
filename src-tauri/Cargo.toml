@@ -34,6 +34,7 @@ reqwest = { version = "0.12.12", features = ["json"] }
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 # 截图翻译：GDI 截图 + Windows.Media.Ocr（与 tauri 用的 windows 版本一致）
 [target.'cfg(target_os = "windows")'.dependencies]

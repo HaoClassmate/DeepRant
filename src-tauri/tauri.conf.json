@@ -26,7 +26,7 @@
     ]
   },
   "bundle": {
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "targets": [
       "app",
       "dmg",
@@ -74,7 +74,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEyRUQyRTlGMEZGRjZCNUQKUldSZGEvOFBueTd0RXB1eStiY2ovR1c0M2lIK0JzTXR0TW9nTjR1QXNsbU9VOGNndG12VHg5L3UK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc1MTg1RjAyQzU0RUMxRTQKUldUa3dVN0ZBbDhZZFlFMkVqVCt6Q3VrdTJnMEc5U2RlN3gzdVlNSzFFbDlBL0Y0NzZTN1pZczEK",
       "endpoints": [
         "https://github.com/HaoClassmate/DeepRant/releases/latest/download/latest.json"
       ],

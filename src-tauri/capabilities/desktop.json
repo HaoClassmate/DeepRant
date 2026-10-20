@@ -19,6 +19,7 @@
     "shell:allow-stdin-write",
     "opener:allow-open-url",
     "updater:default",
+    "process:allow-restart",
     {
       "identifier": "shell:allow-execute",
       "allow": [

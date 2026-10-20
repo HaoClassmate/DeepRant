@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Layout from "./components/Layout";
+import { checkUpdateOnStartup } from "./utils/updater";
 import Home from "./pages/home";
 import Translate from "./pages/Translate";
 import User from "./pages/User";
@@ -20,8 +21,19 @@ const pages = {
   screenOcr: ScreenOcr
 };
 
+// 开发模式下 StrictMode 会让 effect 跑两次，用它保证只检查一次
+let updateChecked = false;
+
 function App() {
   const [activeItem, setActiveItem] = useState("home");
+
+  useEffect(() => {
+    if (updateChecked || import.meta.env.DEV) return;
+    updateChecked = true;
+    // 稍等一下，别和启动时的其他初始化挤在一起
+    const timer = setTimeout(checkUpdateOnStartup, 3000);
+    return () => clearTimeout(timer);
+  }, []);
   const CurrentPage = pages[activeItem];
 
   return (

@@ -30,12 +30,17 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 给更新包签名，应用里的自动更新靠它校验（公钥在 tauri.conf.json）
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
           releaseName: 'DeepRant v__VERSION__'
-          releaseBody: |
-            Windows 安装包。已移除常用语 Alt+数字 快捷键。
-          releaseDraft: true
+          # 会显示在应用的更新提示里
+          releaseBody: ${{ github.event.head_commit.message || 'Windows 安装包' }}
+          # 必须直接发布：应用从 releases/latest 读 latest.json，草稿读不到
+          releaseDraft: false
+          includeUpdaterJson: true
           prerelease: false
 
       - name: Upload installers
