@@ -1,7 +1,44 @@
 use anyhow::Result;
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::sync::OnceLock;
 use tauri::AppHandle;
+
+/// 全局共用一个 HTTP 客户端：连接可以复用，第二次起不用重新握手 TLS
+fn http() -> &'static Client {
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .pool_idle_timeout(std::time::Duration::from_secs(300))
+            .tcp_keepalive(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_default()
+    })
+}
+
+/// 各家接口的报错位置不一样：OpenAI/DeepSeek 是 error.message，硅基流动是 message，有的是 error_msg
+fn api_error(status: reqwest::StatusCode, json: &Value) -> String {
+    let msg = json
+        .pointer("/error/message")
+        .or_else(|| json.get("message"))
+        .or_else(|| json.get("error_msg"))
+        .or_else(|| json.get("error"))
+        .and_then(|m| m.as_str())
+        .unwrap_or("");
+    let hint = match status.as_u16() {
+        401 => "API 密钥不对",
+        402 => "账户余额不足",
+        429 => "请求太频繁或额度用完",
+        _ => "",
+    };
+    match (hint.is_empty(), msg.is_empty()) {
+        (false, false) => format!("{}：{}", hint, msg),
+        (false, true) => hint.to_string(),
+        (true, false) => format!("HTTP {}：{}", status.as_u16(), msg),
+        (true, true) => format!("HTTP {}", status.as_u16()),
+    }
+}
 
 fn get_system_prompt(from: &str, to: &str, scene: &str, mode: &str, daily_mode: bool) -> String {
     if daily_mode {
@@ -200,7 +237,7 @@ pub async fn translate_with_gpt(app: &AppHandle, original: &str) -> Result<Strin
 
     println!("正在发送请求到: {}", model_config.api_url);
     println!("使用的模型: {}", model_config.model_name);
-    println!("API密钥前缀: {}", &model_config.auth[..6]);
+    println!("API密钥前缀: {}", model_config.auth.chars().take(6).collect::<String>());
 
     let system_prompt = get_system_prompt(
         &settings.translation_from,
@@ -209,8 +246,6 @@ pub async fn translate_with_gpt(app: &AppHandle, original: &str) -> Result<Strin
         &settings.translation_mode,
         settings.daily_mode,
     );
-
-    let client = Client::new();
 
     let request_body = if settings.model_type == "deepseek-R1" {
         json!({
@@ -250,34 +285,45 @@ pub async fn translate_with_gpt(app: &AppHandle, original: &str) -> Result<Strin
         })
     };
 
-    let response = match client
+    // R1 要先思考，给长一点
+    let timeout = if settings.model_type == "deepseek-R1" { 120 } else { 20 };
+    let response = match http()
         .post(&model_config.api_url)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", model_config.auth))
+        .timeout(std::time::Duration::from_secs(timeout))
         .json(&request_body)
         .send()
         .await
     {
-        Ok(resp) => match resp.json::<Value>().await {
-            Ok(json) => {
-                // 先检查是否有错误信息
-                if let Some(error) = json.get("error_msg").and_then(|msg| msg.as_str()) {
-                    println!("API返回错误: {}", error);
-                    return Ok(format!("[错误] {}", error));
+        Ok(resp) => {
+            let status = resp.status();
+            match resp.json::<Value>().await {
+                Ok(json) => {
+                    // 先检查是否有错误信息
+                    if !status.is_success() || json.get("error_msg").is_some() {
+                        let error = api_error(status, &json);
+                        println!("API返回错误: {} {:?}", error, json);
+                        return Ok(format!("[错误] {}", error));
+                    }
+                    json
                 }
-                json
+                Err(e) if !status.is_success() => {
+                    println!("API返回错误: HTTP {} {}", status, e);
+                    return Ok(format!("[错误] {}", api_error(status, &Value::Null)));
+                }
+                Err(e) => {
+                    println!("解析响应JSON失败: {}", e);
+                    return Ok(format!("[错误] 服务器响应格式异常: {}", e));
+                }
             }
-            Err(e) => {
-                println!("解析响应JSON失败: {}", e);
-                return Ok(format!("[错误] 服务器响应格式异常: {}", e));
-            }
-        },
+        }
         Err(e) => {
             let error_msg = match e.to_string().as_str() {
-                msg if msg.contains("connection refused") => "无法连接到API服务器，请检查网络设置",
-                msg if msg.contains("timeout") => "请求超时，请检查网络连接",
-                msg if msg.contains("certificate") => "SSL证书验证失败，请检查网络设置",
-                _ => "网络请求失败",
+                _ if e.is_timeout() => format!("请求超时（{} 秒没有响应），模型太慢或网络不通", timeout),
+                _ if e.is_connect() => "无法连接到API服务器，请检查网络设置和接口地址".to_string(),
+                msg if msg.contains("certificate") => "SSL证书验证失败，请检查网络设置".to_string(),
+                _ => "网络请求失败".to_string(),
             };
             println!("请求失败: {}", e);
             return Ok(format!("[错误] {}", error_msg));
@@ -349,7 +395,7 @@ pub async fn translate_incoming(app: &AppHandle, messages: &[String]) -> Result<
         body["temperature"] = json!(0.2);
     }
 
-    let response: Value = Client::new()
+    let response: Value = http()
         .post(&model_config.api_url)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", model_config.auth))
