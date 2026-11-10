@@ -1,5 +1,6 @@
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
+import { invoke } from '@tauri-apps/api/core';
 import { showSuccess, showError } from './toast';
 
 // 下载并安装更新，装好后重启
@@ -38,6 +39,22 @@ export const checkUpdateOnStartup = async () => {
         }
     } catch (error) {
         console.error('启动时检查更新失败:', error);
+    }
+};
+
+// 开机自启时主窗口藏在托盘里，确认框弹在隐藏窗口上看不见，
+// 所以等用户第一次打开主窗口（拿到焦点）再检查；普通启动照常检查
+export const scheduleStartupUpdateCheck = async () => {
+    let fromAutostart = false;
+    try {
+        fromAutostart = await invoke('launched_by_autostart');
+    } catch (error) {
+        console.error('读取启动方式失败:', error);
+    }
+    if (fromAutostart && !document.hasFocus()) {
+        window.addEventListener('focus', () => checkUpdateOnStartup(), { once: true });
+    } else {
+        checkUpdateOnStartup();
     }
 };
 

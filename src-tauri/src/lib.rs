@@ -65,6 +65,12 @@ fn set_autostart(app_handle: tauri::AppHandle, enabled: bool) -> Result<bool, St
     launcher.is_enabled().map_err(|e| e.to_string())
 }
 
+/// 这次是不是开机自启动起来的（主窗口隐藏在托盘）
+#[tauri::command]
+fn launched_by_autostart() -> bool {
+    std::env::args().any(|a| a == AUTOSTART_ARG)
+}
+
 pub fn run() {
     println!("Starting application...");
 
@@ -105,7 +111,7 @@ pub fn run() {
             }
 
             // 开机自启时不弹出主窗口，只留在托盘，快捷键照常可用
-            if std::env::args().any(|a| a == AUTOSTART_ARG) {
+            if launched_by_autostart() {
                 println!("开机自启动，主窗口隐藏到托盘");
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
@@ -125,6 +131,7 @@ pub fn run() {
             get_version,
             get_autostart,
             set_autostart,
+            launched_by_autostart,
             screen_ocr::ocr_select_region,
             screen_ocr::ocr_translate_now,
             screen_ocr::ocr_region_selected,

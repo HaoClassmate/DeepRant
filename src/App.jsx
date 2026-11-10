@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import Layout from "./components/Layout";
-import { checkUpdateOnStartup } from "./utils/updater";
+import { scheduleStartupUpdateCheck } from "./utils/updater";
 import Home from "./pages/home";
 import Translate from "./pages/Translate";
 import User from "./pages/User";
@@ -31,7 +31,7 @@ function App() {
     if (updateChecked || import.meta.env.DEV) return;
     updateChecked = true;
     // 稍等一下，别和启动时的其他初始化挤在一起
-    const timer = setTimeout(checkUpdateOnStartup, 3000);
+    const timer = setTimeout(scheduleStartupUpdateCheck, 3000);
     return () => clearTimeout(timer);
   }, []);
   const CurrentPage = pages[activeItem];
