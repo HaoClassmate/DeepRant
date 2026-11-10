@@ -9,6 +9,8 @@ import { invoke } from '@tauri-apps/api/core';
 export default function About() {
     const [updateStatus, setUpdateStatus] = useState('idle');
     const [currentVersion, setCurrentVersion] = useState('');
+    const [autostart, setAutostart] = useState(false);
+    const [autostartBusy, setAutostartBusy] = useState(true);
 
     useEffect(() => {
         invoke('get_version')
@@ -18,7 +20,26 @@ export default function About() {
             .catch(error => {
                 console.error('获取版本号失败:', error);
             });
+        invoke('get_autostart')
+            .then(enabled => setAutostart(enabled))
+            .catch(error => console.error('读取开机自启动状态失败:', error))
+            .finally(() => setAutostartBusy(false));
     }, []);
+
+    const toggleAutostart = async () => {
+        const next = !autostart;
+        setAutostartBusy(true);
+        try {
+            const enabled = await invoke('set_autostart', { enabled: next });
+            setAutostart(enabled);
+            showSuccess(enabled ? '已开启开机自启动' : '已关闭开机自启动');
+        } catch (error) {
+            console.error('设置开机自启动失败:', error);
+            showError(typeof error === 'string' ? error : '设置开机自启动失败');
+        } finally {
+            setAutostartBusy(false);
+        }
+    };
 
     const checkUpdate = async () => {
         setUpdateStatus('checking');
@@ -56,6 +77,25 @@ export default function About() {
                 <p className="text-zinc-600 dark:text-zinc-400">
                     DeepRant 是一款专为国际服游戏玩家打造的实时翻译工具，致力于打破语言壁垒，让全球玩家畅享跨语言交流的乐趣。
                 </p>
+                <div className="mt-4 pt-4 border-t border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
+                    <div>
+                        <div className="text-sm font-medium text-zinc-900 dark:text-white">开机自启动</div>
+                        <div className="text-xs text-zinc-400 mt-0.5">登录系统后自动在后台运行（只显示托盘图标），快捷键直接可用</div>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={autostart}
+                        aria-label="开机自启动"
+                        onClick={toggleAutostart}
+                        disabled={autostartBusy}
+                        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${autostart ? 'bg-blue-500' : 'bg-zinc-300 dark:bg-zinc-700'} ${autostartBusy ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                    >
+                        <span
+                            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${autostart ? 'translate-x-5' : 'translate-x-0.5'}`}
+                        />
+                    </button>
+                </div>
             </motion.div>
 
             {/* 特性卡片网格 */}

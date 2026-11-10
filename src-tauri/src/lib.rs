@@ -1,5 +1,9 @@
 use crate::store::initialize_settings;
 use tauri::Manager;
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+
+/// 开机自启时附带的启动参数，用来区分「开机自动启动」和「用户手动打开」
+const AUTOSTART_ARG: &str = "--autostart";
 pub mod ai_translator;
 pub mod screen_ocr;
 pub mod shell_helper;
@@ -44,6 +48,23 @@ async fn get_settings(app_handle: tauri::AppHandle) -> Result<store::AppSettings
     store::get_settings(&app_handle).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn get_autostart(app_handle: tauri::AppHandle) -> Result<bool, String> {
+    app_handle.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_autostart(app_handle: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    let launcher = app_handle.autolaunch();
+    let result = if enabled {
+        launcher.enable()
+    } else {
+        launcher.disable()
+    };
+    result.map_err(|e| format!("设置开机自启动失败: {}", e))?;
+    launcher.is_enabled().map_err(|e| e.to_string())
+}
+
 pub fn run() {
     println!("Starting application...");
 
@@ -57,6 +78,11 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         // opener插件
         .plugin(tauri_plugin_opener::init())
+        // 开机自启动插件
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec![AUTOSTART_ARG]),
+        ))
         .setup(|app| {
             // 初始化存储
             println!("Initializing...");
@@ -78,6 +104,16 @@ pub fn run() {
                 Err(e) => eprintln!("创建托盘失败: {}", e),
             }
 
+            // 开机自启时不弹出主窗口，只留在托盘，快捷键照常可用
+            if std::env::args().any(|a| a == AUTOSTART_ARG) {
+                println!("开机自启动，主窗口隐藏到托盘");
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+                #[cfg(target_os = "macos")]
+                let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -87,6 +123,8 @@ pub fn run() {
             log_to_backend,
             get_settings,
             get_version,
+            get_autostart,
+            set_autostart,
             screen_ocr::ocr_select_region,
             screen_ocr::ocr_translate_now,
             screen_ocr::ocr_region_selected,
