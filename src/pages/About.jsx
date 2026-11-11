@@ -8,6 +8,8 @@ import { invoke } from '@tauri-apps/api/core';
 
 export default function About() {
     const [updateStatus, setUpdateStatus] = useState('idle');
+    // 下载进度百分比；拿不到安装包总大小时为 null，按钮只显示"下载更新中"
+    const [downloadPercent, setDownloadPercent] = useState(null);
     const [currentVersion, setCurrentVersion] = useState('');
     const [autostart, setAutostart] = useState(false);
     const [autostartBusy, setAutostartBusy] = useState(true);
@@ -43,7 +45,14 @@ export default function About() {
 
     const checkUpdate = async () => {
         setUpdateStatus('checking');
-        setUpdateStatus(await checkUpdateManually());
+        setDownloadPercent(null);
+        // 一旦开始下载就切到 downloading，按钮显示百分比，
+        // 不再在整个下载期间一直停在"检查更新中"
+        const status = await checkUpdateManually((percent) => {
+            setUpdateStatus('downloading');
+            setDownloadPercent(percent);
+        });
+        setUpdateStatus(status);
     };
 
     return (
@@ -68,7 +77,7 @@ export default function About() {
                                 }`}
                         >
                             {updateStatus === 'checking' && '检查更新中...'}
-                            {updateStatus === 'downloading' && '下载更新中...'}
+                            {updateStatus === 'downloading' && (downloadPercent === null ? '下载更新中...' : `下载更新中 ${downloadPercent}%`)}
                             {updateStatus === 'idle' && '检查更新'}
                             {updateStatus === 'error' && '重试更新'}
                         </button>
